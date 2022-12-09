@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+service PlayAudio {
+  rpc StartListening (Control) returns (stream Chunk){}
+}
+
+message Control {
+  string sig = 1;
+}
+
+message Chunk {
+  bytes wave = 1;
+}
