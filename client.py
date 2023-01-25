@@ -2,36 +2,17 @@ import grpc
 import audio_pb2
 import audio_pb2_grpc
 import pyaudio
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
-import hashlib
+import gzip
 
 CHUNK = 1024
 FORMAT = pyaudio.paInt16
 CHANNELS = 2
 RATE = 44100
 
-ADDR = '192.168.0.5:1080'
-
-PASSWORD = 'my-password'
-
-
-class Decryptor:
-    def __init__(self, password) -> None:
-        self.key = hashlib.sha256(bytes(password, encoding='utf-8')).digest()
-
-
-    def decrypt(self, cipherText):
-        _iv = cipherText[:16]
-        cipherText = cipherText[16:]
-        cipher = AES.new(self.key, AES.MODE_CBC, _iv)
-
-        return unpad(cipher.decrypt(cipherText), AES.block_size)
+ADDR = 'x.x.x.x:1080'
 
 
 def run():
-
-    decryptor = Decryptor(PASSWORD)
 
     with grpc.insecure_channel(ADDR) as channel:
 
@@ -51,9 +32,48 @@ def run():
         )
 
         for chunk in audio:
-            plainWave = decryptor.decrypt(chunk.wave)
-            stream.write(plainWave)
+            data = gzip.decompress(chunk.wave)
+            stream.write(data)
+
+
+def run_secure():
+    with open('./ssl/ca.crt', 'rb') as f:
+        ca = f.read()
+
+    with open('./ssl/client.key', 'rb') as f:
+        private_key = f.read()
+
+    with open('./ssl/client.crt', 'rb') as f:
+        client_cert = f.read()
+
+    credentials = grpc.ssl_channel_credentials(ca, private_key, client_cert)
+    options = (
+        ('grpc.ssl_target_name_override', 'server'),
+        ('grpc.default_authority', 'server')
+    )
+
+    with grpc.secure_channel(ADDR, credentials, options) as channel:
+
+        stub = audio_pb2_grpc.PlayAudioStub(channel)
+
+        req = audio_pb2.Control(sig='start')
+
+        audio = stub.StartListening(req, compression=grpc.Compression.Gzip)
+
+        p = pyaudio.PyAudio()
+
+        stream = p.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=RATE,
+            output=True
+        )
+
+        for chunk in audio:
+            data = gzip.decompress(chunk.wave)
+            stream.write(data)
 
 
 if __name__ == '__main__':
-    run()
+    # run()
+    run_secure()

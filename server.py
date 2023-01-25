@@ -5,26 +5,20 @@ from concurrent import futures
 import pyaudio
 import gzip
 
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
-import hashlib
 
-
-ADDR = '0.0.0.0:1080'
+PORT = 1080
 
 CHUNK = 1024
 FORMAT = pyaudio.paInt16
 CHANNELS = 2
 RATE = 44100
 
-PASSWORD = '123321'
-
 COMPRESSLEVEL = 2
 
 
 class AudioService(audio_pb2_grpc.PlayAudioServicer):
-    def __init__(self, encryptor) -> None:
-        self.encryptor = encryptor
+    def __init__(self) -> None:
+        pass
 
     def StartListening(self, request, context):
         print(request.sig)
@@ -32,9 +26,9 @@ class AudioService(audio_pb2_grpc.PlayAudioServicer):
         audioSource = AudioSource(FORMAT, CHANNELS, RATE, CHUNK)
 
         for data in audioSource.getAudio():
-            # data = gzip.compress(data, compresslevel=COMPRESSLEVEL)
-            # yield audio_pb2.Chunk(wave=self.encryptor.encrypt(data))
+            data = gzip.compress(data, compresslevel=COMPRESSLEVEL)
             yield audio_pb2.Chunk(wave=data)
+            # yield audio_pb2.Chunk(wave=data)
 
 
 class AudioSource:
@@ -60,26 +54,40 @@ class AudioSource:
             yield stream.read(CHUNK)
 
 
-class Encryptor:
-    def __init__(self, password) -> None:
-        self.key = hashlib.sha256(bytes(password, encoding='utf-8')).digest()
-
-    def encrypt(self, plainText):
-        self.cipher = AES.new(self.key, AES.MODE_CBC)
-        cipherText = self.cipher.iv + \
-            self.cipher.encrypt(pad(plainText, AES.block_size))
-
-        return cipherText
-
-
 def serve():
-    encryptor = Encryptor(PASSWORD)
 
-    server = grpc.server(futures.ThreadPoolExecutor(
-        max_workers=8))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
     audio_pb2_grpc.add_PlayAudioServicer_to_server(
-        servicer=AudioService(encryptor), server=server)
-    server.add_insecure_port(ADDR)
+        servicer=AudioService(), server=server)
+    server.add_insecure_port('[::]:' + str(PORT))
+    server.start()
+
+    print("started")
+
+    server.wait_for_termination()
+
+
+def serveSecure():
+
+    with open('./ssl/ca.crt', 'rb') as f:
+        ca = f.read()
+
+    with open('./ssl/server.key', 'rb') as f:
+        private_key = f.read()
+
+    with open('./ssl/server.crt', 'rb') as f:
+        server_cert = f.read()
+
+    credentials = grpc.ssl_server_credentials(
+        [(private_key, server_cert)],
+        root_certificates=ca,
+        require_client_auth=True
+    )
+
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
+    audio_pb2_grpc.add_PlayAudioServicer_to_server(
+        servicer=AudioService(), server=server)
+    server.add_secure_port('[::]:' + str(PORT), credentials)
     server.start()
 
     print("started")
@@ -88,4 +96,7 @@ def serve():
 
 
 if __name__ == '__main__':
-    serve()
+
+    serveSecure()
+
+    # serve()
